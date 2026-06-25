@@ -184,6 +184,9 @@ def main() -> int:
     transcript_segments: list[dict] = []
     transcript_text: str | None = None
     transcript_source: str | None = None
+    # Captures *why* a transcript is missing, so the report states the real
+    # cause (e.g. audio too large) instead of a generic "no API key" message.
+    transcript_failure: str | None = None
     if dl.get("subtitle_path"):
         try:
             all_segments = parse_vtt(dl["subtitle_path"])
@@ -202,11 +205,21 @@ def main() -> int:
                     work / "audio.mp3",
                     backend=backend,
                     api_key=api_key,
+                    start_seconds=start_sec,
+                    end_seconds=end_sec,
                 )
+                # Whisper timestamps are relative to the trimmed clip (starts at
+                # 0); shift them onto the absolute timeline so they align with
+                # the absolute frame timestamps.
+                if start_sec:
+                    for seg in all_segments:
+                        seg["start"] += start_sec
+                        seg["end"] += start_sec
                 transcript_segments = filter_range(all_segments, start_sec, end_sec) if focused else all_segments
                 transcript_text = format_transcript(transcript_segments)
                 transcript_source = f"whisper ({used_backend})"
             except SystemExit as exc:
+                transcript_failure = f"Whisper transcription failed: {exc}"
                 print(f"[watch] whisper fallback failed: {exc}", file=sys.stderr)
         else:
             hint = (
@@ -214,11 +227,14 @@ def main() -> int:
                 if args.whisper else
                 "no subtitles and no Whisper API key found"
             )
+            transcript_failure = hint
             setup_py = SCRIPT_DIR / "setup.py"
             print(
                 f"[watch] {hint} — run `python3 {setup_py}` to enable the Whisper fallback",
                 file=sys.stderr,
             )
+    elif not transcript_segments and args.no_whisper:
+        transcript_failure = "no subtitles and Whisper disabled with --no-whisper"
 
     info = dl.get("info") or {}
 
@@ -305,12 +321,14 @@ def main() -> int:
         print(f"_No transcript lines fell inside {format_time(effective_start)} → {format_time(effective_end)}._")
     else:
         setup_py = SCRIPT_DIR / "setup.py"
-        print(
-            "_No transcript available — proceed with frames only. "
-            "Captions were missing and the Whisper fallback was unavailable "
-            "(no API key set, or `--no-whisper` was used). "
-            f"Run `python3 {setup_py}` to enable Whisper, then re-run._"
-        )
+        reason = transcript_failure or "captions were missing and no Whisper API key was found"
+        msg = f"_No transcript available — proceed with frames only. Reason: {reason}."
+        # Only point at setup.py when a key is actually missing — not for size
+        # limits, disabled Whisper, or API errors where the key is fine.
+        if "key" in reason.lower() and "missing" in reason.lower() or "no Whisper API key" in reason:
+            msg += f" Run `python3 {setup_py}` to enable Whisper, then re-run."
+        msg += "_"
+        print(msg)
 
     print()
     print("---")

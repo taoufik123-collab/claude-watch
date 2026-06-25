@@ -31,6 +31,11 @@ GROQ_MODEL = "whisper-large-v3"
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
 
+# Both Groq and OpenAI reject audio uploads larger than 25 MB. At ~480 kB/min
+# (mono 16 kHz 64 kbps), that caps a single transcription at roughly 50 minutes
+# of audio — longer videos must be watched in sections via --start/--end.
+WHISPER_MAX_MB = 25.0
+
 
 def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, None]:
     """Return (backend, api_key). Prefers Groq, falls back to OpenAI.
@@ -82,17 +87,33 @@ def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, 
     return None, None
 
 
-def extract_audio(video_path: str, out_path: Path) -> Path:
-    """Extract mono 16kHz 64kbps mp3 — ~480 kB/min, fits any Whisper limit."""
+def extract_audio(
+    video_path: str,
+    out_path: Path,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+) -> Path:
+    """Extract mono 16kHz 64kbps mp3 — ~480 kB/min.
+
+    When start/end are given, only that range is extracted — essential for
+    long videos, where the full audio would exceed the Whisper upload limit
+    (see WHISPER_MAX_MB). Trim flags go before -i so ffmpeg seeks without
+    decoding the whole file.
+    """
     if shutil.which("ffmpeg") is None:
         raise SystemExit("ffmpeg is not installed. Install with: brew install ffmpeg")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-y",
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    if start_seconds is not None:
+        cmd += ["-ss", f"{start_seconds:.3f}"]
+    if end_seconds is not None:
+        # Use -t (duration) rather than -to: with -ss before -i the output PTS
+        # resets to 0, so an absolute -to would be misinterpreted across ffmpeg
+        # versions. Duration is unambiguous.
+        start = start_seconds or 0.0
+        cmd += ["-t", f"{max(0.0, end_seconds - start):.3f}"]
+    cmd += [
         "-i", str(Path(video_path).resolve()),
         "-vn",
         "-acodec", "libmp3lame",
@@ -277,10 +298,14 @@ def transcribe_video(
     audio_out: Path,
     backend: str | None = None,
     api_key: str | None = None,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
 ) -> tuple[list[dict], str]:
     """Run the full flow: extract audio → upload → parse segments.
 
-    Returns (segments, backend_used). Raises SystemExit on any failure.
+    When start/end are given, only that range is transcribed — keeps long
+    videos under the Whisper upload limit. Returns (segments, backend_used).
+    Raises SystemExit on any failure.
     """
     if backend is None or api_key is None:
         detected_backend, detected_key = load_api_key()
@@ -296,8 +321,17 @@ def transcribe_video(
         )
 
     print(f"[watch] extracting audio for Whisper ({backend})…", file=sys.stderr)
-    audio_path = extract_audio(video_path, audio_out)
+    audio_path = extract_audio(video_path, audio_out, start_seconds, end_seconds)
     size_kb = audio_path.stat().st_size / 1024
+    size_mb = size_kb / 1024
+    if size_mb > WHISPER_MAX_MB:
+        approx_min = int(size_mb / 0.48)  # ~480 kB per minute of audio
+        raise SystemExit(
+            f"audio is {size_mb:.1f} MB — over the {WHISPER_MAX_MB:.0f} MB "
+            f"{backend} Whisper upload limit (~{approx_min} min of audio). "
+            "Re-run on a shorter section with --start/--end "
+            "(e.g. --start 0 --end 30:00) to transcribe it in chunks."
+        )
     print(f"[watch] audio: {size_kb:.0f} kB — uploading to {backend} Whisper…", file=sys.stderr)
 
     if backend == "groq":
