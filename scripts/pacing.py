@@ -52,7 +52,18 @@ def compute_pacing(
             "shots": [],
         }
 
-    times = sorted(scene_times)
+    # Deduplicate and keep only strictly-increasing cut times. Repeated or
+    # regressed timestamps (a known artifact of ffmpeg metadata parsing) would
+    # otherwise create zero-length phantom shots and crush the median toward 0.
+    times: list[float] = []
+    for t in sorted(scene_times):
+        if not times or t > times[-1] + 1e-3:
+            times.append(t)
+    if not times:
+        return {
+            "shot_count": 0, "cuts_per_minute": 0.0,
+            "mean_shot_length": 0.0, "median_shot_length": 0.0, "shots": [],
+        }
     if times[0] > 0.01:
         times = [0.0] + times
 
@@ -69,7 +80,13 @@ def compute_pacing(
             shot["motion_score"] = round(float(motion_scores[i]), 3)
         shots.append(shot)
 
-    durations = [s["duration_seconds"] for s in shots]
+    # Statistics over real shots only — exclude sub-frame slivers (<0.1s) that
+    # are parsing noise rather than genuine cuts. Keep them in `shots` for
+    # downstream hero-frame selection, but don't let them skew the profile.
+    durations = [s["duration_seconds"] for s in shots if s["duration_seconds"] >= 0.1]
+    if not durations:
+        durations = [s["duration_seconds"] for s in shots]
+
     return {
         "shot_count": len(shots),
         "cuts_per_minute": round(len(shots) / (video_duration / 60.0), 2),

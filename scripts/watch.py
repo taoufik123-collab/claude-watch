@@ -15,6 +15,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from classify import classify  # noqa: E402
 from download import download, is_url  # noqa: E402
 from frames import (  # noqa: E402
     MAX_FPS, auto_fps, auto_fps_focus, extract, extract_scene_change,
@@ -66,6 +67,17 @@ def main() -> int:
         action="store_true",
         help="Skip the dense 0-10s hook re-pass.",
     )
+    ap.add_argument(
+        "--mode",
+        choices=["auto", "transcript", "balanced", "frames"],
+        default="auto",
+        help=(
+            "How to analyse the video. 'auto' (default) classifies talking-head "
+            "vs visually-dense and picks a frame budget accordingly: a talking "
+            "head gets a thin set of frames + the transcript, a screencast/"
+            "B-roll video gets the full frame budget. Force a mode to override."
+        ),
+    )
     args = ap.parse_args()
 
     max_frames = min(args.max_frames, 100)
@@ -101,6 +113,37 @@ def main() -> int:
     effective_end = end_sec if end_sec is not None else full_duration
     effective_duration = max(0.0, effective_end - effective_start)
     focused = start_sec is not None or end_sec is not None
+
+    # --- Auto-classification: spend frame budget only where it pays off -------
+    # Talking-head videos get a thin frame set (content lives in the transcript);
+    # visually-dense videos get the full budget (frames carry information). The
+    # user can force this with --mode; focused ranges always get full density
+    # (they're zooming in deliberately) and skip classification.
+    classification: dict | None = None
+    user_capped = args.max_frames != 80  # explicit --max-frames overrides auto
+    if not focused:
+        if args.mode == "auto":
+            classification = classify(
+                video_path, pacing=None, duration_seconds=full_duration
+            )
+            print(
+                f"[watch] classified as {classification['mode']} "
+                f"({classification['label']}); {classification['reason']}",
+                file=sys.stderr,
+            )
+            if not user_capped:
+                max_frames = min(max_frames, classification["frame_budget"])
+        elif args.mode in ("transcript", "balanced", "frames"):
+            forced_budget = {"transcript": 12, "balanced": 40, "frames": 80}[args.mode]
+            classification = {
+                "mode": args.mode, "label": f"forced via --mode {args.mode}",
+                "frame_budget": forced_budget, "reason": "user override",
+                "confident": True,
+            }
+            if not user_capped:
+                max_frames = min(max_frames, forced_budget)
+            print(f"[watch] mode forced to {args.mode} (budget {max_frames})",
+                  file=sys.stderr)
 
     if focused:
         fps, target = auto_fps_focus(effective_duration, max_frames=max_frames)
@@ -256,6 +299,24 @@ def main() -> int:
     else:
         print("- **Transcript:** none available")
 
+    if classification:
+        print(
+            f"- **Analysis mode:** {classification['mode']} — {classification['label']}"
+        )
+        if classification["mode"] == "transcript":
+            print(
+                "  > This is a talking-head/near-static video: the content lives in "
+                "the **transcript**, and the frames are near-duplicates. Read the few "
+                "frames to confirm setting/speaker, but base your answer on the "
+                "transcript. (Frame budget was trimmed to save tokens.)"
+            )
+        elif classification["mode"] == "frames":
+            print(
+                "  > This is a **visually dense** video: the frames carry information "
+                "the transcript doesn't (on-screen text, diagrams, UI, B-roll). Read "
+                "the frames — they're where the value is."
+            )
+
     if not focused and full_duration > 600:
         mins = int(full_duration // 60)
         print()
@@ -277,6 +338,21 @@ def main() -> int:
     print()
     for frame in frames:
         print(f"- `{frame['path']}` (t={format_time(frame['timestamp_seconds'])})")
+
+    # Surface hook-microscope frames in the main stream too, so they're actually
+    # Read. Previously they were extracted to disk but never printed here.
+    hook_frames = hook_result.get("frames", []) if hook_result else []
+    if hook_frames:
+        print()
+        print("## Hook frames (0-10s, dense)")
+        print()
+        print(
+            "**The first 10 seconds at 2 fps — Read these to analyse the hook.** "
+            "This is the highest-leverage window of the video."
+        )
+        print()
+        for hf in hook_frames:
+            print(f"- `{hf['path']}` (t={hf.get('timestamp_seconds', 0.0):.1f}s)")
 
     print()
     print("## Transcript")

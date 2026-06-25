@@ -215,55 +215,17 @@ def extract_scene_change(
     for existing in out_dir.glob("frame_*.jpg"):
         existing.unlink()
 
-    # Build a select expression that emits frame 0 + every scene-change frame.
-    select_expr = f"eq(n\\,0)+gt(scene\\,{scene_threshold})"
-    vf = f"select='{select_expr}',metadata=mode=print:file=-,scale={resolution}:-2"
+    # Pass 1 — DETECT all scene-change timestamps across the whole range, with
+    # NO frame cap. The previous one-pass design capped extraction with
+    # `-frames:v max_frames`, which meant a fast-cut intro (e.g. 100 cuts in the
+    # first 20s) consumed the entire budget and the rest of the video was never
+    # sampled at all. We now collect every cut first, then downsample evenly.
+    scene_times = _detect_scene_times(
+        video_path, scene_threshold, start_seconds, end_seconds
+    )
 
-    output_pattern = str(out_dir / "frame_%04d.jpg")
-    cmd: list[str] = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-    ]
-    if start_seconds is not None:
-        cmd += ["-ss", f"{start_seconds:.3f}"]
-    if end_seconds is not None:
-        cmd += ["-to", f"{end_seconds:.3f}"]
-    cmd += [
-        "-i", str(Path(video_path).resolve()),
-        "-vf", vf,
-        "-vsync", "vfr",
-        "-frames:v", str(max_frames),
-        "-q:v", "4",
-        output_pattern,
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise SystemExit(f"ffmpeg scene-change extraction failed: {result.stderr.strip()}")
-
-    # Parse pts_time lines from stdout/stderr (ffmpeg version variance).
-    pts_times: list[float] = []
-    for stream in (result.stdout, result.stderr):
-        for line in stream.splitlines():
-            line = line.strip()
-            if "pts_time" in line:
-                for tok in line.split():
-                    if tok.startswith("pts_time:"):
-                        try:
-                            pts_times.append(float(tok.split(":", 1)[1]))
-                        except ValueError:
-                            pass
-                    elif tok.startswith("pts_time="):
-                        try:
-                            pts_times.append(float(tok.split("=", 1)[1]))
-                        except ValueError:
-                            pass
-
-    frames = sorted(out_dir.glob("frame_*.jpg"))
-
-    # Fallback: too few scene frames means this video is static-ish.
-    if len(frames) < uniform_fallback_min:
-        for f in frames:
-            f.unlink()
+    # Fallback: static-ish video (few/no cuts) -> uniform sampling.
+    if len(scene_times) < uniform_fallback_min:
         meta = get_metadata(video_path)
         full_duration = meta["duration_seconds"]
         eff_start = start_seconds if start_seconds is not None else 0.0
@@ -276,19 +238,157 @@ def extract_scene_change(
             start_seconds=start_seconds, end_seconds=end_seconds,
         )
 
-    offset = start_seconds or 0.0
-    if len(pts_times) < len(frames):
-        pts_times += [0.0] * (len(frames) - len(pts_times))
+    # Downsample evenly across the FULL set of cuts so coverage spans the whole
+    # video, not just its busiest stretch. Always keep the first and last cut.
+    selected = _evenly_sample(scene_times, max_frames)
+
+    # Pass 2 — EXTRACT exactly the selected timestamps as JPEGs.
+    frames = _extract_at_times(
+        video_path, out_dir, selected, resolution=resolution
+    )
+
+    # `selected` already holds the absolute timestamps (offset baked in by the
+    # detector), aligned 1:1 with the extracted JPEGs.
+    n = len(frames)
+    ts = selected[:n] if len(selected) >= n else selected + [selected[-1]] * (n - len(selected))
 
     return [
         {
             "index": i,
-            "timestamp_seconds": round(offset + pts_times[i], 2),
+            "timestamp_seconds": round(ts[i], 2),
             "path": str(p),
             "source": "scene-change",
         }
         for i, p in enumerate(frames)
     ]
+
+
+def _detect_scene_times(
+    video_path: str,
+    scene_threshold: float,
+    start_seconds: float | None,
+    end_seconds: float | None,
+) -> list[float]:
+    """Pass 1: return ALL scene-change timestamps (absolute seconds), no cap.
+
+    Uses `select=gt(scene,T)` + `showinfo` over a null muxer (no JPEGs written),
+    so it's cheap. Always includes the range start as the opening shot.
+    """
+    vf = f"select='gt(scene\\,{scene_threshold})',showinfo"
+    cmd: list[str] = ["ffmpeg", "-hide_banner", "-loglevel", "info", "-y"]
+    if start_seconds is not None:
+        cmd += ["-ss", f"{start_seconds:.3f}"]
+    if end_seconds is not None:
+        cmd += ["-to", f"{end_seconds:.3f}"]
+    cmd += ["-i", str(Path(video_path).resolve()), "-vf", vf,
+            "-vsync", "vfr", "-an", "-f", "null", "-"]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    offset = start_seconds or 0.0
+    times: list[float] = [offset]  # opening shot
+    for line in result.stderr.splitlines():
+        if "pts_time:" not in line:
+            continue
+        for tok in line.split():
+            if tok.startswith("pts_time:"):
+                try:
+                    times.append(offset + float(tok.split(":", 1)[1]))
+                except ValueError:
+                    pass
+                break
+    # Strictly increasing, deduplicated.
+    out: list[float] = []
+    for t in sorted(times):
+        if not out or t > out[-1] + 1e-3:
+            out.append(t)
+    return out
+
+
+def _evenly_sample(values: list[float], k: int) -> list[float]:
+    """Pick k scene-change times with good coverage in *time*, not just index.
+
+    A naive even-index pick over the cut list over-weights a fast-cut intro
+    (100 cuts in 20s would still eat most of the budget). Instead we split the
+    timeline into k equal-duration buckets and take the cut nearest each
+    bucket's centre. This guarantees the whole runtime is represented while
+    still snapping every sample onto a real scene boundary.
+    """
+    n = len(values)
+    if n <= k:
+        return list(values)
+    if k <= 1:
+        return [values[0]]
+
+    lo, hi = values[0], values[-1]
+    span = hi - lo
+    if span <= 0:
+        # Degenerate (all cuts at same instant) — fall back to even index pick.
+        return [values[round(i * (n - 1) / (k - 1))] for i in range(k)]
+
+    chosen: list[float] = []
+    used: set[int] = set()
+    for i in range(k):
+        # Centre of bucket i in time.
+        target = lo + span * (i + 0.5) / k
+        # Nearest unused cut to that time.
+        best_j, best_d = None, None
+        for j, v in enumerate(values):
+            if j in used:
+                continue
+            d = abs(v - target)
+            if best_d is None or d < best_d:
+                best_j, best_d = j, d
+        if best_j is not None:
+            used.add(best_j)
+            chosen.append(values[best_j])
+    chosen = sorted(set(chosen))
+    # Guarantee the very first and last cuts are present (open/close shots).
+    # If adding them would exceed k, drop an interior sample to make room so the
+    # endpoints are never the ones trimmed off.
+    if values[0] not in chosen:
+        chosen.insert(0, values[0])
+    if values[-1] not in chosen:
+        chosen.append(values[-1])
+    if len(chosen) > k:
+        first, last = chosen[0], chosen[-1]
+        interior = chosen[1:-1]
+        # Evenly thin the interior down to k-2 items.
+        keep = k - 2
+        if keep <= 0:
+            return [first, last][:k]
+        m = len(interior)
+        interior = [interior[round(i * (m - 1) / (keep - 1))] for i in range(keep)] \
+            if keep > 1 else [interior[m // 2]]
+        chosen = [first] + sorted(set(interior)) + [last]
+    return chosen
+
+
+def _extract_at_times(
+    video_path: str,
+    out_dir: Path,
+    times: list[float],
+    resolution: int = 512,
+) -> list[Path]:
+    """Pass 2: extract one JPEG per timestamp in `times` (absolute seconds).
+
+    Uses fast input seeking per frame. This is robust and order-preserving:
+    frame_0001.jpg corresponds to times[0], and so on.
+    """
+    written: list[Path] = []
+    for i, t in enumerate(times, start=1):
+        out_path = out_dir / f"frame_{i:04d}.jpg"
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-ss", f"{max(0.0, t):.3f}",
+            "-i", str(Path(video_path).resolve()),
+            "-vf", f"scale={resolution}:-2",
+            "-frames:v", "1", "-q:v", "4",
+            str(out_path),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0 and out_path.exists():
+            written.append(out_path)
+    return written
 
 
 def select_hero_frames(
