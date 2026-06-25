@@ -21,7 +21,7 @@ from frames import (  # noqa: E402
     format_time, get_metadata, parse_time, select_hero_frames,
 )
 from hook import analyse_hook  # noqa: E402
-from pacing import compute_pacing  # noqa: E402
+from pacing import compute_pacing, motion_scores_for_shots  # noqa: E402
 from report import write_report  # noqa: E402
 from transcribe import filter_range, format_transcript, parse_vtt  # noqa: E402
 from whisper import load_api_key, transcribe_video  # noqa: E402
@@ -155,6 +155,16 @@ def main() -> int:
         video_duration=effective_duration,
         motion_scores=None,
     )
+    # Per-shot motion (ffmpeg signalstats) — only meaningful with real shot
+    # boundaries from scene-change detection. Feeds hero-frame selection.
+    if sampling_mode == "scene-change" and pacing["shots"]:
+        print("[watch] scoring per-shot motion (ffmpeg signalstats)…", file=sys.stderr)
+        motion = motion_scores_for_shots(video_path, pacing["shots"])
+        pacing = compute_pacing(
+            scene_times=scene_times,
+            video_duration=effective_duration,
+            motion_scores=motion,
+        )
 
     # Hook microscope: dense pass over [0, 10s] when not in focused mode.
     if (not args.no_hook_microscope) and (not focused) and full_duration >= 30.0:
