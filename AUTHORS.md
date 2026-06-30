@@ -14,3 +14,10 @@ the MIT license, © 2026 Bradley Bonanno.
 
 Scene-change frame extraction, the 0-10s hook microscope, the structured `report.md`, and
 optional Obsidian auto-save, on top of Bradley's pipeline.
+
+## Contributors
+
+**MrBill700** — [MrBill700](https://github.com/MrBill700)
+
+Local Whisper backend (`scripts/whisper_local.py`) — on-machine faster-whisper transcription
+with no API key, as a drop-in alternative to the Groq/OpenAI backends.
