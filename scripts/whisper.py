@@ -31,12 +31,78 @@ GROQ_MODEL = "whisper-large-v3"
 OPENAI_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
 OPENAI_MODEL = "whisper-1"
 
+# --- Local backend (faster-whisper, on-machine) ------------------------------
+# Runs Whisper locally instead of calling an API: no key required, and the audio
+# never leaves the machine. Opt in with WATCH_WHISPER_LOCAL=1. The actual
+# transcription runs in whisper_local.py, executed by an interpreter that has
+# faster-whisper installed (resolved by _local_python below).
+LOCAL_ENABLE_ENV = "WATCH_WHISPER_LOCAL"
+LOCAL_PYTHON_ENV = "WATCH_WHISPER_LOCAL_PYTHON"
+
+
+def _local_python() -> str | None:
+    """Interpreter that can run faster-whisper, or None if unavailable.
+
+    Resolution order:
+      1. $WATCH_WHISPER_LOCAL_PYTHON — explicit path to a python whose
+         environment has faster-whisper installed (e.g. a dedicated GPU venv,
+         such as F:\\Programs\\TranscribeWhisper\\venv\\Scripts\\python.exe).
+      2. The current interpreter, if it can already import faster_whisper.
+    """
+    explicit = os.environ.get(LOCAL_PYTHON_ENV)
+    if explicit:
+        return explicit if Path(explicit).exists() else None
+    try:
+        import importlib.util
+        if importlib.util.find_spec("faster_whisper") is not None:
+            return sys.executable
+    except Exception:
+        return None
+    return None
+
+
+def local_enabled() -> bool:
+    """True when local faster-whisper should be the default Whisper backend."""
+    flag = os.environ.get(LOCAL_ENABLE_ENV, "").strip().lower()
+    return flag in ("1", "true", "yes", "on") and _local_python() is not None
+
+
+def _transcribe_local(audio_path: Path, word_timestamps: bool = False) -> tuple[list[dict], list[dict]]:
+    """Run faster-whisper locally via the bridge. Returns (segments, words)."""
+    py = _local_python()
+    if not py:
+        raise SystemExit(
+            "local whisper requested but the faster-whisper interpreter was not found. "
+            f"Set {LOCAL_PYTHON_ENV} to a python.exe that has faster-whisper installed."
+        )
+    bridge = Path(__file__).resolve().parent / "whisper_local.py"
+    cmd = [py, str(bridge), str(audio_path.resolve())]
+    if word_timestamps:
+        cmd.append("--words")
+    print("[watch] transcribing locally via faster-whisper (no API)…", file=sys.stderr)
+    # stderr inherits the parent's so model-load/progress lines stream live;
+    # only stdout (the JSON payload) is captured.
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        raise SystemExit(f"local whisper failed (exit {result.returncode}) — see the [whisper-local] lines above")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"local whisper returned non-JSON: {exc}: {result.stdout[:200]}")
+    return data.get("segments") or [], data.get("words") or []
+
 
 def load_api_key(preferred: str | None = None) -> tuple[str, str] | tuple[None, None]:
     """Return (backend, api_key). Prefers Groq, falls back to OpenAI.
 
     If `preferred` is "groq" or "openai", only that backend's key is considered.
+    The pseudo-backend "local" needs no key — it returns ("local", "local") so
+    downstream truthiness guards pass while routing to faster-whisper.
     """
+    if preferred == "local":
+        return "local", "local"
+    if preferred is None and local_enabled():
+        return "local", "local"
     def _from_env(name: str) -> str | None:
         value = os.environ.get(name)
         return value.strip() if value else None
@@ -298,6 +364,14 @@ def transcribe_video(
     print(f"[watch] extracting audio for Whisper ({backend})…", file=sys.stderr)
     audio_path = extract_audio(video_path, audio_out)
     size_kb = audio_path.stat().st_size / 1024
+
+    if backend == "local":
+        segments, _ = _transcribe_local(audio_path, word_timestamps=False)
+        if not segments:
+            raise SystemExit("local whisper returned no transcript segments")
+        print(f"[watch] transcribed {len(segments)} segments via local faster-whisper", file=sys.stderr)
+        return segments, "local"
+
     print(f"[watch] audio: {size_kb:.0f} kB — uploading to {backend} Whisper…", file=sys.stderr)
 
     if backend == "groq":
@@ -332,6 +406,10 @@ def transcribe_audio(
         api_key = api_key or detected_key
     if not backend or not api_key:
         raise SystemExit("No Whisper API key available for transcribe_audio()")
+
+    if backend == "local":
+        segments, words = _transcribe_local(audio_path, word_timestamps=word_timestamps)
+        return segments, "local", words
 
     if backend == "groq":
         endpoint, model = GROQ_ENDPOINT, GROQ_MODEL

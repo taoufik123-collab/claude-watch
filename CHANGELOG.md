@@ -2,6 +2,19 @@
 
 All notable changes to `/watch` are documented here.
 
+## [0.3.0] — 2026-06-30
+
+### Added
+- Local Whisper backend — run transcription on-machine via [faster-whisper](https://github.com/SYSTRAN/faster-whisper) instead of the Groq/OpenAI APIs. No API key, and the audio never leaves the machine.
+  - New `scripts/whisper_local.py` bridge — transcribes a single audio file and prints the same `{start, end, text}` (and optional word-level) JSON the API backends produce, so frame/transcript alignment and the 0-10s hook microscope work identically. Defaults to `large-v3` / `float16` / beam 1 / VAD on, CUDA with CPU/int8 fallback.
+  - `scripts/whisper.py` gains a `local` backend: `local_enabled()` + `_local_python()` resolution (explicit `$WATCH_WHISPER_LOCAL_PYTHON`, else the current interpreter if it can import `faster_whisper`), a `"local"` short-circuit in `load_api_key()`, and `local` branches in `transcribe_video()` / `transcribe_audio()`.
+  - Opt in with `WATCH_WHISPER_LOCAL=1`; when set and resolvable it becomes the default backend (captions still tried first). Force per-run with `--whisper local`.
+  - `scripts/setup.py` `--check` / `--json` report `ready` with `whisper_backend: local` when local mode is configured, so no API key is requested.
+- New `--whisper local` choice in `scripts/watch.py`.
+
+### Changed
+- README documents the local backend, the `WATCH_WHISPER_LOCAL` / `WATCH_WHISPER_LOCAL_PYTHON` env vars, and a new "no key" row in the capabilities table. `SKILL.md` Transcription section describes the local path.
+
 ## [0.2.0] — 2026-05-25
 
 Based on [bradautomates/claude-video](https://github.com/bradautomates/claude-video) v0.1.3 by Bradley Bonanno (MIT). Its pipeline (yt-dlp + ffmpeg + Whisper) is preserved; everything below is additive.

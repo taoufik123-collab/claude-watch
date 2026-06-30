@@ -17,7 +17,7 @@ Codex / generic skills:
 git clone https://github.com/taoufik123-collab/claude-watch.git ~/.codex/skills/watch
 ```
 
-Zero config to start — `yt-dlp` and `ffmpeg` install on first run via `brew` on macOS (Linux/Windows print exact commands). Captions cover most public videos for free. Whisper API key is only needed when a video has no captions. Set `$WATCH_VAULT_DIR` to point at your Obsidian vault for auto-save, or leave it unset and the skill skips the ingest step quietly.
+Zero config to start — `yt-dlp` and `ffmpeg` install on first run via `brew` on macOS (Linux/Windows print exact commands). Captions cover most public videos for free. A Whisper backend is only needed when a video has no captions — use a [local faster-whisper](#local-whisper-no-api-key) install (no key) or a Groq/OpenAI key. Set `$WATCH_VAULT_DIR` to point at your Obsidian vault for auto-save, or leave it unset and the skill skips the ingest step quietly.
 
 ## What's inside
 
@@ -135,9 +135,25 @@ Captions cover the majority of public videos for free. The Whisper fallback only
 | Capability | What you need | Cost |
 |------------|---------------|------|
 | Download + native captions | `yt-dlp` + `ffmpeg` | Free |
+| Whisper fallback (local, no key) | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + `WATCH_WHISPER_LOCAL=1` | Free, on-machine, private |
 | Whisper fallback (preferred) | [Groq API key](https://console.groq.com/keys) — `whisper-large-v3` | Cheap, fast |
 | Whisper fallback (alt) | [OpenAI API key](https://platform.openai.com/api-keys) — `whisper-1` | Standard pricing |
 | Disable Whisper entirely | `--no-whisper` | Free, frames-only when no captions |
+
+### Local Whisper (no API key)
+
+Prefer to keep audio on your machine, or just don't want to manage an API key? Point the Whisper fallback at a local [faster-whisper](https://github.com/SYSTRAN/faster-whisper) install instead of Groq/OpenAI.
+
+```bash
+export WATCH_WHISPER_LOCAL=1
+# Optional: an interpreter whose env has faster-whisper (e.g. a GPU venv).
+# Omit it and the skill uses its own interpreter if faster-whisper is importable there.
+export WATCH_WHISPER_LOCAL_PYTHON="/path/to/python-with-faster-whisper"
+```
+
+When `WATCH_WHISPER_LOCAL` is set and a faster-whisper interpreter is resolvable, it becomes the default backend: captions are still tried first, and when a video has none the audio is transcribed locally via `scripts/whisper_local.py` — same `{start, end, text}` (and word-level) output the API backends produce, so frame/transcript alignment and the hook microscope work identically. `setup.py --check` treats this as "ready" (no key needed). Force it explicitly with `--whisper local`, or override per-run with `--whisper groq|openai`.
+
+Defaults mirror a typical accuracy-first config (`large-v3` / `float16` / beam 1 / VAD on), using CUDA when available and falling back to CPU/int8. Note the model loads per invocation, so local transcription adds a few seconds of startup over an API call.
 
 ## Usage
 
@@ -160,7 +176,7 @@ Other knobs (passed to `scripts/watch.py`):
 - `--max-frames N` — lower the frame cap for a tighter token budget.
 - `--resolution W` — bump frame width to 1024 px when Claude needs to read on-screen text (slides, terminals, code).
 - `--fps F` — override the auto-fps calculation (still capped at 2 fps).
-- `--whisper groq|openai` — force a specific Whisper backend.
+- `--whisper groq|openai|local` — force a specific Whisper backend (`local` = on-machine faster-whisper, see [Local Whisper](#local-whisper-no-api-key)).
 - `--no-whisper` — disable transcription entirely; frames only.
 - `--out-dir DIR` — keep working files somewhere specific (default: auto-generated tmp dir).
 
@@ -181,7 +197,8 @@ Other knobs (passed to `scripts/watch.py`):
 │   ├── download.py          # yt-dlp wrapper
 │   ├── frames.py            # ffmpeg frame extraction + auto-fps logic
 │   ├── transcribe.py        # VTT parsing + dedupe + Whisper orchestration
-│   ├── whisper.py           # Groq / OpenAI clients (pure stdlib)
+│   ├── whisper.py           # Groq / OpenAI clients (pure stdlib) + local backend dispatch
+│   ├── whisper_local.py     # local faster-whisper bridge (no API key)
 │   ├── setup.py             # preflight + installer
 │   └── build-skill.sh       # build dist/watch.skill for claude.ai upload
 ├── hooks/                   # SessionStart status hook (Claude Code only)

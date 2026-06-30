@@ -116,7 +116,7 @@ Optional flags:
 - `--resolution W` — change frame width in px (default 512; bump to 1024 only if the user needs to read on-screen text)
 - `--fps F` — override auto-fps (clamped to 2 fps max). Setting `--fps` disables scene-change sampling.
 - `--out-dir DIR` — keep working files somewhere specific (default: an auto-generated tmp dir)
-- `--whisper groq|openai` — force a specific Whisper backend (default: prefer Groq if both keys exist)
+- `--whisper groq|openai|local` — force a specific Whisper backend. `local` runs faster-whisper on-machine (no key); default prefers `local` when `WATCH_WHISPER_LOCAL` is set, else Groq, then OpenAI
 - `--no-whisper` — disable the Whisper fallback entirely (frames-only if no captions)
 - `--no-scene-change` — force uniform frame sampling (debug only; usually leave on)
 - `--no-hook-microscope` — skip the 0-10s dense pass (saves ~1 Whisper call)
@@ -221,14 +221,15 @@ The "different angle" path is what makes /watch truly plug-and-play — the user
 
 ## Transcription
 
-The script gets a timestamped transcript in one of two ways:
+The script gets a timestamped transcript in one of these ways:
 
 1. **Native captions (free, preferred).** yt-dlp pulls manual or auto-generated subtitles from the source platform if available.
-2. **Whisper API fallback.** If no captions came back (or the source is a local file), the script extracts audio (`ffmpeg -vn -ac 1 -ar 16000 -b:a 64k`, ~0.5 MB/min) and uploads it to whichever Whisper API has a key configured:
+2. **Local Whisper (no API key).** When `WATCH_WHISPER_LOCAL` is set and a faster-whisper interpreter is resolvable, captionless audio is transcribed on-machine via `scripts/whisper_local.py` — run by `$WATCH_WHISPER_LOCAL_PYTHON` (e.g. a dedicated GPU venv), or the skill's own interpreter if it can import `faster_whisper`. This is the default fallback when enabled; force it with `--whisper local`. Output matches the API backends ({start, end, text} + optional word-level), so nothing downstream changes.
+3. **Whisper API fallback.** If no captions came back (or the source is a local file) and local mode is off, the script extracts audio (`ffmpeg -vn -ac 1 -ar 16000 -b:a 64k`, ~0.5 MB/min) and uploads it to whichever Whisper API has a key configured:
    - **Groq** — `whisper-large-v3`. Preferred default: cheaper, faster. Get a key at console.groq.com/keys.
    - **OpenAI** — `whisper-1`. Fallback. Get a key at platform.openai.com/api-keys.
 
-Both keys live in `~/.config/watch/.env`. The script prefers Groq when both are set; override with `--whisper openai` to force OpenAI. Use `--no-whisper` to skip the fallback entirely.
+API keys live in `~/.config/watch/.env`. The script prefers Groq when both are set; override with `--whisper openai` to force OpenAI. Local mode needs no key. Use `--no-whisper` to skip the fallback entirely.
 
 ## Failure modes and handling
 

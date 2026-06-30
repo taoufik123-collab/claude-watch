@@ -95,7 +95,21 @@ def _read_env_key(name: str) -> str | None:
     return None
 
 
+def _local_whisper_ready() -> bool:
+    """True when local faster-whisper is configured (no API key needed)."""
+    flag = (os.environ.get("WATCH_WHISPER_LOCAL") or "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        return False
+    explicit = os.environ.get("WATCH_WHISPER_LOCAL_PYTHON")
+    if explicit:
+        return Path(explicit).exists()
+    import importlib.util
+    return importlib.util.find_spec("faster_whisper") is not None
+
+
 def _have_api_key() -> tuple[bool, str | None]:
+    if _local_whisper_ready():
+        return True, "local"
     if _read_env_key("GROQ_API_KEY"):
         return True, "groq"
     if _read_env_key("OPENAI_API_KEY"):

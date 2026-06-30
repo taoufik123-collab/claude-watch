@@ -46,9 +46,10 @@ def main() -> int:
     )
     ap.add_argument(
         "--whisper",
-        choices=["groq", "openai"],
+        choices=["groq", "openai", "local"],
         default=None,
-        help="Force a specific Whisper backend. Default: prefer Groq, fall back to OpenAI.",
+        help="Force a Whisper backend. Default: 'local' if WATCH_WHISPER_LOCAL is set, "
+             "else prefer Groq, fall back to OpenAI.",
     )
     ap.add_argument(
         "--intent",
