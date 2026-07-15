@@ -12,6 +12,18 @@ import tempfile
 from pathlib import Path
 
 
+# Force UTF-8 on stdout/stderr so non-Latin transcripts (Arabic, emoji, accented
+# text) don't crash the run on Windows, whose console defaults to a legacy
+# codepage (cp1252) that can't encode them. No-op on platforms already using UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
