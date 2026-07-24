@@ -1,6 +1,6 @@
 ---
 name: watch
-description: Watch a video (URL or local path) like an editor. Extracts scene-change frames, pacing metrics (cuts/min, shot length), and a dense 0-10s hook microscope; pulls transcript from captions or Whisper. Produces an ingest-ready `report.md` and, after answering the user, optionally auto-ingests the analysis into your Obsidian vault (configurable via `$WATCH_VAULT_DIR`) — tied to *why* the user watched it.
+description: Watch a video (URL or local path) like an editor. Auto-classifies the video (talking-head vs visually-dense) and spends frame budget only where it pays off; extracts scene-change frames with even coverage across the whole runtime, pacing metrics (cuts/min, shot length), and a dense 0-10s hook microscope; pulls a native-language transcript from captions (any language) or Whisper. Produces an ingest-ready `report.md` and, after answering the user, optionally auto-ingests the analysis into your Obsidian vault (configurable via `$WATCH_VAULT_DIR`) — tied to *why* the user watched it.
 argument-hint: "<video-url-or-path> [why you're watching it]"
 allowed-tools: Bash, Read, AskUserQuestion
 homepage: https://github.com/taoufik123-collab/claude-watch
@@ -14,7 +14,13 @@ user-invocable: true
 
 You don't have a video input; this skill gives you one. A Python script downloads the video, extracts frames as JPEGs (one per detected shot via scene-change), gets a timestamped transcript (native captions first, then Whisper API as fallback), runs editorial pacing metrics, and microscopes the first 10 seconds at higher density. You then `Read` each frame path to see the images, combine them with the transcript to answer the user, fill the structured `report.md`, and offer to ingest the analysis into Taoufik's Second Brain.
 
-## What v2 does differently
+## What v3 does differently
+
+- **Auto-classification (spend frames only where they pay off)** — before extracting, the skill classifies the video by *visual information density* (`scripts/classify.py`). A talking-head / near-static video gets a thin set of confirmation frames + the transcript (the content lives in the words); a screencast / diagram-heavy / B-roll video gets the full frame budget (the frames carry information the transcript never states). The report tells you which mode you're in so you know whether to lean on the frames or the transcript. Override with `--mode auto|transcript|balanced|frames`.
+- **Native-language transcript (any language)** — the downloader detects the video's native language and pulls that caption track first, instead of the old English-only request that left non-English videos with no transcript at all. The model reads any language and answers in the user's. Override the language order with `$WATCH_SUB_LANGS`.
+- **Even coverage across the whole runtime** — scene-change sampling is two-pass: detect every cut, then sample for even coverage *in time*. A fast-cut intro no longer eats the entire frame budget and starves the body of the video.
+
+## What v2 introduced
 
 - **Scene-change frame sampling** — one frame per detected shot instead of uniform ticks. Cuts the frame budget on long videos while capturing every transition.
 - **Editorial pacing metrics** — cuts/min, mean shot length, motion (when available). Lets you reason about pacing the way an editor does.

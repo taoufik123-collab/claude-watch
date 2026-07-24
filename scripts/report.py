@@ -94,9 +94,20 @@ def write_report(
         reason = hook.get("skipped_reason", "n/a")
         lines.append(f"_Skipped: {reason}._")
     else:
-        lines.append(f"- Frames: {len(hook.get('frames', []))} at 2 fps")
+        hook_frames = hook.get("frames", [])
+        lines.append(f"- Frames: {len(hook_frames)} at 2 fps")
+        # Emit the actual frame paths so Claude can Read them. Without this the
+        # hook frames were extracted to disk but never surfaced — the section
+        # was effectively dead. (Bug fix.)
+        if hook_frames:
+            lines.append("")
+            lines.append("  **Read these hook frames with the Read tool:**")
+            for hf in hook_frames:
+                ts = hf.get("timestamp_seconds", 0.0)
+                lines.append(f"  - `{hf['path']}` (t={ts:.1f}s)")
         words = hook.get("words", [])
         if words:
+            lines.append("")
             lines.append(f"- Word-level transcript ({len(words)} words):")
             lines.append("")
             lines.append("```")

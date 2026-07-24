@@ -2,6 +2,51 @@
 
 All notable changes to `/watch` are documented here.
 
+## [0.3.0] — 2026-06-25
+
+A reliability + cost pass driven by a head-to-head review of `/watch` against a
+plain transcript-only approach on three real videos (two German talking heads,
+one English screencast). The review surfaced four concrete issues; all are
+fixed here. **No new dependencies** — still pure ffmpeg + yt-dlp + stdlib.
+
+### Fixed
+- **Non-English videos got no transcript.** `download.py` hardcoded
+  `--sub-langs en,en-US,en-GB,en-orig`, so a German (or any non-English) video
+  fell through to "no captions" even though YouTube had native auto-captions.
+  It now probes the video's native language (`yt-dlp --dump-json`) and requests
+  the native track first, reducing the regional tag (`de-DE`) to the actually
+  downloadable base/`-orig` tracks (`de`, `de-orig`), with English as fallback.
+  Override with `$WATCH_SUB_LANGS`. The model reads any language and answers in
+  the user's — no machine translation in the pipeline.
+- **Fast-cut intros starved the rest of the video.** Scene extraction capped
+  with `-frames:v max_frames` in a single pass, so a montage intro with 100+
+  cuts in the first 20s consumed the whole budget and the remaining minutes
+  were never sampled. Now two-pass: detect *all* cuts, then sample for even
+  coverage *in time* (bucketed), snapping each pick to a real scene boundary.
+- **Pacing median collapsed to ~0.04s.** Timestamp parsing (`metadata=print`)
+  mis-aligned with written frames and padded gaps with `0.0`, creating phantom
+  zero-length shots. Switched to `showinfo` parsing, plus `compute_pacing` now
+  dedups non-increasing timestamps and excludes sub-frame slivers from the
+  mean/median.
+- **Hook-microscope frames were extracted but never surfaced.** The 0-10s
+  frames were written to disk but never listed in `report.md` or the stdout
+  stream, so they couldn't be Read. They're now emitted in both.
+
+### Added
+- **Auto-classification (`scripts/classify.py`).** Decides whether a video is
+  worth a full frame pass or is better served transcript-first. The signal is
+  *visual information density*, not motion: `edge_peak / (motion_median + ε)` —
+  high for slides/diagrams/UI/code (frames carry info the transcript doesn't),
+  low for a talking head (the transcript already has the content). A
+  talking-head video drops to a thin confirmation set (~12 frames), saving
+  ~14k image tokens per video; a dense screencast keeps the full budget.
+- **`--mode auto|transcript|balanced|frames`** in `watch.py` (default `auto`).
+  The chosen mode and a one-line rationale are printed to the report so the
+  reader knows whether to lean on the frames or the transcript.
+- 16 new unit tests (`test_classify.py`, `test_subtitle_langs.py`,
+  `test_sampling.py`) covering classification, native-language resolution,
+  even-coverage sampling, and pacing robustness. 23 tests total, all stdlib.
+
 ## [0.2.0] — 2026-05-25
 
 Based on [bradautomates/claude-video](https://github.com/bradautomates/claude-video) v0.1.3 by Bradley Bonanno (MIT). Its pipeline (yt-dlp + ffmpeg + Whisper) is preserved; everything below is additive.
