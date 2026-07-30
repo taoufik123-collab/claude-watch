@@ -15,6 +15,16 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.resolve()
 sys.path.insert(0, str(SCRIPT_DIR))
 
+# Windows consoles default to cp1252, which can't encode characters like the
+# "→" arrow used in the focused-mode (--start/--end) report line — that
+# crashed the whole run with UnicodeEncodeError. Force UTF-8 on our streams so
+# output never dies. No-op where already UTF-8 or where reconfigure is missing.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 from download import download, is_url  # noqa: E402
 from frames import (  # noqa: E402
     MAX_FPS, auto_fps, auto_fps_focus, extract, extract_scene_change,
