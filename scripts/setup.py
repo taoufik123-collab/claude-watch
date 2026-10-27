@@ -50,12 +50,25 @@ OPENAI_API_KEY=
 
 
 def _which(name: str) -> str | None:
-    return shutil.which(name)
+    found = shutil.which(name)
+    if found:
+        return found
+
+    if name == "yt-dlp":
+        result = subprocess.run(
+            [sys.executable, "-m", "yt_dlp", "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if result.returncode == 0:
+            return f"{sys.executable} -m yt_dlp"
+
+    return None
 
 
 def _check_binaries() -> list[str]:
     return [b for b in REQUIRED_BINARIES if not _which(b)]
-
 
 def _check_file_permissions(path: Path) -> None:
     """Warn to stderr if a secrets file is world/group readable."""
