@@ -240,9 +240,10 @@ def cmd_check() -> int:
     if not s["has_api_key"]:
         parts.append("no Whisper API key (GROQ_API_KEY or OPENAI_API_KEY)")
     installer = Path(__file__).resolve()
+    py_cmd = "python" if (sys.platform.startswith("win") or platform.system() == "Windows") else "python3"
     sys.stderr.write(
         f"[watch] setup incomplete ({'; '.join(parts)}). "
-        f"Run: python3 {installer}\n"
+        f"Run: {py_cmd} {installer}\n"
     )
     sys.stderr.flush()
 

@@ -3,7 +3,7 @@
 
 Deterministic sections (frontmatter, pacing numbers, transcript) are filled
 by this script. Narrative sections (TL;DR, entities, concepts, etc.) are
-emitted as `<!-- pending Claude fill: <hint> -->` markers so Claude (the
+emitted as `<!-- pending agent fill: <hint> -->` markers so Claude (the
 orchestrator) knows exactly what to write before offering ingest.
 
 The schema is dictated by what an Obsidian-style Ingest op (see
@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 def _pending(hint: str) -> str:
-    return f"<!-- pending Claude fill: {hint} -->"
+    return f"<!-- pending agent fill: {hint} -->"
 
 
 def _fmt_time(seconds: float) -> str:
@@ -184,7 +184,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("usage: report.py <kwargs.json> [<out.md>]", file=sys.stderr)
         raise SystemExit(2)
-    payload = json.loads(Path(sys.argv[1]).read_text())
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("report.md")
     write_report(out_path=out, **payload)
     print(str(out.resolve()))

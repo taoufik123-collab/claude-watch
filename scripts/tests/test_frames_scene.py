@@ -70,5 +70,41 @@ class TestSceneChange(unittest.TestCase):
         self.assertGreaterEqual(len(frames), 5, "fallback should produce >=5 frames")
 
 
+
+    def test_ffmpeg_flag_fallback(self):
+        """Verify automatic fallback from -fps_mode to -vsync when modern flag fails."""
+        import unittest.mock as mock
+        orig_run = subprocess.run
+        ffmpeg_calls = []
+
+        out_dir = self.tmp / "fallback_frames"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd and cmd[0] == "ffmpeg":
+                ffmpeg_calls.append(list(cmd))
+                if len(ffmpeg_calls) == 1 and "-fps_mode" in cmd:
+                    return subprocess.CompletedProcess(
+                        cmd, 1, stdout="", stderr="Unrecognized option 'fps_mode'."
+                    )
+                # Second call simulates legacy ffmpeg succeeding with -vsync
+                (out_dir / "frame_0001.jpg").touch()
+                (out_dir / "frame_0002.jpg").touch()
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="pts_time:0.0\npts_time:1.0\n", stderr=""
+                )
+            return orig_run(cmd, *args, **kwargs)
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            frames = extract_scene_change(
+                str(self.video), out_dir,
+                scene_threshold=0.3, resolution=128, max_frames=10,
+                uniform_fallback_min=1,
+            )
+            self.assertEqual(len(ffmpeg_calls), 2)
+            self.assertIn("-fps_mode", ffmpeg_calls[0])
+            self.assertIn("-vsync", ffmpeg_calls[1])
+            self.assertEqual(len(frames), 2)
+
 if __name__ == "__main__":
     unittest.main()

@@ -205,8 +205,9 @@ def main() -> int:
                 "no subtitles and no Whisper API key found"
             )
             setup_py = SCRIPT_DIR / "setup.py"
+            py_cmd = "python" if sys.platform.startswith("win") else "python3"
             print(
-                f"[watch] {hint} — run `python3 {setup_py}` to enable the Whisper fallback",
+                f"[watch] {hint} — run `{py_cmd} {setup_py}` to enable the Whisper fallback",
                 file=sys.stderr,
             )
 
@@ -295,11 +296,12 @@ def main() -> int:
         print(f"_No transcript lines fell inside {format_time(effective_start)} → {format_time(effective_end)}._")
     else:
         setup_py = SCRIPT_DIR / "setup.py"
+        py_cmd = "python" if sys.platform.startswith("win") else "python3"
         print(
             "_No transcript available — proceed with frames only. "
             "Captions were missing and the Whisper fallback was unavailable "
             "(no API key set, or `--no-whisper` was used). "
-            f"Run `python3 {setup_py}` to enable Whisper, then re-run._"
+            f"Run `{py_cmd} {setup_py}` to enable Whisper, then re-run._"
         )
 
     print()
