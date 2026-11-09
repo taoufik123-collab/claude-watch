@@ -14,12 +14,35 @@ user-invocable: true
 
 You don't have a video input; this skill gives you one. A Python script downloads the video, extracts frames as JPEGs (one per detected shot via scene-change), gets a timestamped transcript (native captions first, then Whisper API as fallback), runs editorial pacing metrics, and microscopes the first 10 seconds at higher density. You then `Read` each frame path to see the images, combine them with the transcript to answer the user, fill the structured `report.md`, and offer to ingest the analysis into Taoufik's Second Brain.
 
+## Cross-Agent & Platform Compatibility
+
+This skill runs across **Claude Code**, **Google Gemini CLI**, and **Google Antigravity** on macOS, Linux, and Windows:
+
+### Agent Tool Mapping
+
+| Claude Code Tool | Gemini / Antigravity Tool | Capability & Usage |
+|------------------|---------------------------|--------------------|
+| `Bash` | `run_command` | Execute shell commands and Python scripts (`bash` on macOS/Linux, PowerShell on Windows) |
+| `Read` | `read_file` | Multimodal JPEG context ingestion and reading generated reports |
+| `AskUserQuestion` | `ask_question` | Interactive user confirmation for API keys and Obsidian vault ingestion |
+| `Edit` | `edit_file` / `write_file` | Populate narrative report sections and update configurations |
+
+### Cross-Platform Shell & Environment Guidelines
+
+- **Python Interpreter**: On macOS and Linux, invoke with `python3`. On Windows (PowerShell/CMD), use `python` (since `python3` on Windows is often the Microsoft Store redirector). The skill's scripts adapt to both.
+- **Path Resolution**: Normalize all filesystem paths using `pathlib.Path.resolve()` to prevent cross-platform separator and symlink inconsistencies.
+- **FFmpeg Compatibility**: Modern FFmpeg 5+ flag `-fps_mode vfr` is supported with automatic fallback to legacy `-vsync vfr` if rejected by older binaries.
+- **Obsidian URL Handlers**:
+  - **macOS**: `open "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"`
+  - **Linux**: `xdg-open "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"`
+  - **Windows (PowerShell)**: `Start-Process "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"`
+
 ## What v2 does differently
 
 - **Scene-change frame sampling** — one frame per detected shot instead of uniform ticks. Cuts the frame budget on long videos while capturing every transition.
 - **Editorial pacing metrics** — cuts/min, mean shot length, motion (when available). Lets you reason about pacing the way an editor does.
 - **Hook microscope** — first 10s auto-runs at 2 fps + word-level Whisper. The single most leveraged 10 seconds of any video deserves dense treatment.
-- **Structured `report.md`** — every watch emits an ingest-shaped report at `<workdir>/report.md` with TL;DR, key moments, hook breakdown, editorial profile, quotable moments, entities, concepts, and transcript. Narrative sections are emitted as `<!-- pending Claude fill: ... -->` markers — you fill them in before offering ingest.
+- **Structured `report.md`** — every watch emits an ingest-shaped report at `<workdir>/report.md` with TL;DR, key moments, hook breakdown, editorial profile, quotable moments, entities, concepts, and transcript. Narrative sections are emitted as `<!-- pending agent fill: ... -->` markers — you fill them in before offering ingest.
 - **Step 4.5 — Ingest gate** — after answering the user, you ask once: "Want to ingest this into your Obsidian vault?" If yes, and a vault is detected, you read `$VAULT_DIR/CLAUDE.md` (if it exists) and run that vault's Ingest op against the report.
 
 None of the above add new dependencies — pure ffmpeg + stdlib + the existing Whisper backend.
@@ -150,16 +173,16 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" "$URL" --start 2:15 --end 2:45 --
 python3 "${CLAUDE_SKILL_DIR}/scripts/watch.py" "$URL" --start 1:12:00
 ```
 
-**Step 3 — Read every frame path the script lists.** The Read tool renders JPEGs directly as images for you. Read all frames in a single message (parallel tool calls) so you see them together. The frames are in chronological order with a `t=MM:SS` timestamp so you can align them to the transcript.
+**Step 3 — Read every frame path the script lists.** The Read (or read_file) tool renders JPEGs directly as images for you. Read all frames in a single message (parallel tool calls) so you see them together. The frames are in chronological order with a `t=MM:SS` timestamp so you can align them to the transcript.
 
 **Step 4 — answer the user, then fill the report.** You now have three streams of evidence:
 - **Frames** — what's on screen at each timestamp
 - **Transcript** — what's said at each timestamp
-- **`report.md`** — structured artifact at `<workdir>/report.md` with `<!-- pending Claude fill: ... -->` markers
+- **`report.md`** — structured artifact at `<workdir>/report.md` with `<!-- pending agent fill: ... -->` markers
 
 First, answer the user's question in chat citing timestamps.
 
-Then, **fill in the pending markers in `report.md` using the Edit tool**. Walk every `<!-- pending Claude fill: ... -->` in order:
+Then, **fill in the pending markers in `report.md` using the Edit (or edit_file / write_file) tool**. Walk every `<!-- pending agent fill: ... -->` in order:
 - **TL;DR** — 3-5 bullets through the lens of the user's intent (read from the frontmatter)
 - **Key moments** — 5-10 timestamped bullets
 - **Hook microscope interpretation** — frame-by-frame: visual change × what's said; identify the hook pattern (question, contrarian claim, in-medias-res, demo-first, etc.)
@@ -177,11 +200,22 @@ When `$VAULT_DIR` resolves:
 1. **Derive the slug now** (do not wait for Step 4.5). Take the video title from `report.md` frontmatter, slugify (lowercase, ASCII-only, hyphens, max 60 chars), append `-YYYY-MM-DD`. Example: `karpathy-claude-md-43k-installs-2026-05-24`.
 2. **Create the staging dir:** `mkdir -p "$VAULT_DIR/raw/watched/<slug>"`.
 3. **Copy `report.md` + every hero frame** (filenames in the report frontmatter under `hero_frames:`) into that dir. The report MUST live inside the vault for Obsidian to open it.
-4. **Open in Obsidian via URL scheme** (macOS). The vault URL-name is the final component of `$VAULT_DIR` with spaces URL-encoded as `%20`:
-   ```bash
-   VAULT_NAME=$(basename "$VAULT_DIR" | sed 's/ /%20/g')
-   open "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"
-   ```
+4. **Open in Obsidian via URL scheme**. The vault URL-name is the final component of `$VAULT_DIR` with spaces URL-encoded as `%20`:
+   - **macOS**:
+     ```bash
+     VAULT_NAME=$(basename "$VAULT_DIR" | sed 's/ /%20/g')
+     open "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"
+     ```
+   - **Linux**:
+     ```bash
+     VAULT_NAME=$(basename "$VAULT_DIR" | sed 's/ /%20/g')
+     xdg-open "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"
+     ```
+   - **Windows (PowerShell)**:
+     ```powershell
+     $VAULT_NAME = (Split-Path -Leaf $VAULT_DIR) -replace ' ', '%20'
+     Start-Process "obsidian://open?vault=${VAULT_NAME}&file=raw/watched/<slug>/report.md"
+     ```
    The `file=` value is the path relative to the vault root, no leading slash. Don't ask permission — the user has already opted in by running /watch.
 5. **Echo the vault-relative path in chat** on its own line: `📄 Report (open in Obsidian): raw/watched/<slug>/report.md`. So if Obsidian was closed / the URL handler missed, the user can still navigate to it manually inside the vault.
 
@@ -237,7 +271,7 @@ Both keys live in `~/.config/watch/.env`. The script prefers Groq when both are 
 - **Long video warning printed** → acknowledge it in your answer. Offer to re-run focused on a specific section via `--start`/`--end` rather than a sparse full-video scan.
 - **Download fails** → yt-dlp's error goes to stderr. If it's a login-required or region-locked video, tell the user plainly; do not keep retrying.
 - **Whisper request fails** → the error is printed to stderr (likely: invalid key, rate limit, or 25 MB upload limit on a very long video). The report will say "none available" for transcript. You can retry with `--whisper openai` if Groq failed (or vice versa).
-- **Report has unfilled `<!-- pending Claude fill: ... -->` markers** → you skipped Step 4. Go back, read the report, fill every marker via Edit, then offer ingest. Never ingest a half-filled report — the Second Brain Ingest op will produce sparse/wrong entity pages.
+- **Report has unfilled `<!-- pending agent fill: ... -->` markers** → you skipped Step 4. Go back, read the report, fill every marker via Edit, then offer ingest. Never ingest a half-filled report — the Second Brain Ingest op will produce sparse/wrong entity pages.
 - **Ingest fails partway** → do not roll back. The Second Brain Ingest op is idempotent on re-run (it updates existing pages rather than duplicating). Tell the user what failed, leave the staged artifact in `raw/watched/<slug>/`, and they can re-run by saying "ingest the staged report at `<slug>`".
 
 ## Token efficiency

@@ -16,6 +16,11 @@ Claude Code:
 
 claude.ai (web): [download `watch.skill`](https://github.com/taoufik123-collab/claude-watch/releases/latest) and drop it into Settings → Capabilities → Skills.
 
+Google Gemini / Antigravity:
+```bash
+git clone https://github.com/taoufik123-collab/claude-watch.git ~/.gemini/config/skills/watch
+```
+
 Codex / generic skills:
 ```bash
 git clone https://github.com/taoufik123-collab/claude-watch.git ~/.codex/skills/watch
@@ -27,7 +32,7 @@ Zero config to start — `yt-dlp` and `ffmpeg` install on first run via `brew` o
 
 - **Scene-change frame extraction** — `scripts/frames.py` grabs one frame per detected shot via ffmpeg's `select=gt(scene,...)`, not a uniform tick every N seconds. Token cost stays flat on long videos because the frame count is bounded by the number of cuts, not the duration.
 - **0-10s hook microscope** — `scripts/hook.py` runs a denser 2 fps pass on the opening 10 seconds plus a word-level Whisper transcript, so the report tells you what was on screen *as each word landed*. The first 10 seconds is where every video either earns your attention or loses it.
-- **Structured `report.md` with Claude-fill markers** — `scripts/report.py` emits a fixed-schema report (TL;DR, key moments, hook breakdown, editorial profile, quotable moments, entities, concepts, transcript) where narrative sections are explicit `<!-- pending Claude fill: ... -->` markers. Claude has a job-list to walk before ingest, not a blank doc.
+- **Structured `report.md` with agent-fill markers** — `scripts/report.py` emits a fixed-schema report (TL;DR, key moments, hook breakdown, editorial profile, quotable moments, entities, concepts, transcript) where narrative sections are explicit `<!-- pending agent fill: ... -->` markers. The agent has a job-list to walk before ingest, not a blank doc.
 - **Optional Obsidian auto-save** — Step 4.4 stages the report into `$VAULT_DIR/raw/watched/<slug>/` and opens it via the `obsidian://` URL scheme. Step 4.5 offers ingest into the vault's wiki. Both steps skip cleanly when no vault is detected. Vault path is resolved from `$WATCH_VAULT_DIR` or auto-detected from `~/Second brain/`, `~/Documents/Obsidian/`, `~/Obsidian/`.
 
 The core pipeline — yt-dlp download, ffmpeg frames, Groq/OpenAI Whisper backends, the `--start`/`--end` focused mode, the SessionStart hook, the multi-surface install — comes from the original `claude-video` project and works unchanged (see [Credits](#credits)).
@@ -88,6 +93,7 @@ When the user names a moment ("around 2:30", "the last 30 seconds", "from 0:45 t
 |---------|---------|
 | **Claude Code** | `/plugin marketplace add taoufik123-collab/claude-watch` then `/plugin install watch@claude-watch` |
 | **claude.ai** (web) | [Download `watch.skill`](https://github.com/taoufik123-collab/claude-watch/releases/latest) → Settings → Capabilities → Skills → `+` |
+| **Google Gemini / Antigravity** | `git clone https://github.com/taoufik123-collab/claude-watch.git ~/.gemini/config/skills/watch` |
 | **Codex** | `git clone https://github.com/taoufik123-collab/claude-watch.git ~/.codex/skills/watch` |
 | **Manual / dev** | `git clone https://github.com/taoufik123-collab/claude-watch.git ~/.claude/skills/watch` |
 | **Configuration** | Optional: `export WATCH_VAULT_DIR=/path/to/your/obsidian/vault` to enable auto-save. Auto-detects `~/Second brain/`, `~/Documents/Obsidian/`, `~/Obsidian/`. |
@@ -108,6 +114,16 @@ Update later with `/plugin update watch@claude-watch`.
 3. Click `+` and drop the file in.
 
 Enable "Code execution and file creation" under Capabilities first — the skill shells out to `ffmpeg` and `yt-dlp`, so it won't run without it.
+
+### Google Gemini / Antigravity
+
+```bash
+# Global Gemini / Antigravity skill directory:
+git clone https://github.com/taoufik123-collab/claude-watch.git ~/.gemini/config/skills/watch
+
+# Or workspace-scoped:
+git clone https://github.com/taoufik123-collab/claude-watch.git .gemini/skills/watch
+```
 
 ### Codex
 

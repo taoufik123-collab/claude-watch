@@ -67,7 +67,7 @@ class TestReport(unittest.TestCase):
             "## Transcript",
         ):
             self.assertIn(header, text, f"missing: {header}")
-        self.assertIn("<!-- pending Claude fill", text)
+        self.assertIn("<!-- pending agent fill", text)
         self.assertIn("Cuts/min: 2.88", text)
         self.assertIn("Mean shot length: 20.83", text)
         self.assertIn("Hello world.", text)

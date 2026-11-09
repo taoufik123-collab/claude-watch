@@ -143,6 +143,7 @@ def extract(
     if shutil.which("ffmpeg") is None:
         raise SystemExit("ffmpeg is not installed. Install with: brew install ffmpeg")
 
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     for existing in out_dir.glob("frame_*.jpg"):
         existing.unlink()
@@ -179,7 +180,7 @@ def extract(
         {
             "index": i,
             "timestamp_seconds": round(offset + (i / fps if fps > 0 else 0.0), 2),
-            "path": str(p),
+            "path": str(p.resolve()),
         }
         for i, p in enumerate(frames)
     ]
@@ -211,6 +212,7 @@ def extract_scene_change(
     if shutil.which("ffmpeg") is None:
         raise SystemExit("ffmpeg is not installed. Install with: brew install ffmpeg")
 
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     for existing in out_dir.glob("frame_*.jpg"):
         existing.unlink()
@@ -230,13 +232,25 @@ def extract_scene_change(
     cmd += [
         "-i", str(Path(video_path).resolve()),
         "-vf", vf,
-        "-vsync", "vfr",
+        "-fps_mode", "vfr",
         "-frames:v", str(max_frames),
         "-q:v", "4",
         output_pattern,
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
+    # Modern FFmpeg (5.0+) uses -fps_mode vfr; legacy FFmpeg uses -vsync vfr.
+    # Fall back gracefully if modern flag is rejected or fails.
+    if result.returncode != 0 and (
+        "fps_mode" in result.stderr.lower()
+        or "vsync" in result.stderr.lower()
+        or "unrecognized option" in result.stderr.lower()
+        or "option not found" in result.stderr.lower()
+    ):
+        flag_idx = cmd.index("-fps_mode") if "-fps_mode" in cmd else (cmd.index("-vsync") if "-vsync" in cmd else -1)
+        if flag_idx != -1:
+            cmd[flag_idx] = "-vsync" if cmd[flag_idx] == "-fps_mode" else "-fps_mode"
+            result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise SystemExit(f"ffmpeg scene-change extraction failed: {result.stderr.strip()}")
 
@@ -284,7 +298,7 @@ def extract_scene_change(
         {
             "index": i,
             "timestamp_seconds": round(offset + pts_times[i], 2),
-            "path": str(p),
+            "path": str(p.resolve()),
             "source": "scene-change",
         }
         for i, p in enumerate(frames)

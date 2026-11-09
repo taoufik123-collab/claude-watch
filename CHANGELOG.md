@@ -2,6 +2,17 @@
 
 All notable changes to `/watch` are documented here.
 
+## [0.2.1] — 2026-11-09
+
+### Added
+- Official cross-agent compatibility for Google Gemini CLI and Google Antigravity in `SKILL.md` and `README.md`.
+- Cross-agent tool mapping table in `SKILL.md` (`Bash` ↔ `run_command`, `Read` ↔ `read_file`, `AskUserQuestion` ↔ `ask_question`, `Edit` ↔ `edit_file` / `write_file`).
+- Windows PowerShell support for launching Obsidian (`Start-Process`) alongside macOS (`open`) and Linux (`xdg-open`).
+- Modern FFmpeg 5+ flag `-fps_mode vfr` in `scripts/frames.py` with automatic fallback to legacy `-vsync vfr` if rejected by older binaries.
+- Cross-platform path normalization using `pathlib.Path.resolve()`.
+- Generalized narrative report placeholders from `<!-- pending Claude fill -->` to `<!-- pending agent fill -->`.
+- Unit test for FFmpeg flag fallback in `scripts/tests/test_frames_scene.py`.
+
 ## [0.2.0] — 2026-05-25
 
 Based on [bradautomates/claude-video](https://github.com/bradautomates/claude-video) v0.1.3 by Bradley Bonanno (MIT). Its pipeline (yt-dlp + ffmpeg + Whisper) is preserved; everything below is additive.
